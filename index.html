@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NBA Similarity Engine</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;400;600;700;800&family=Barlow:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & tokens ─────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0a0a0a;
+      --surface:   #111111;
+      --surface2:  #181818;
+      --border:    #242424;
+      --accent:    #f5a623;
+      --accent2:   #e8460a;
+      --text:      #e8e4dc;
+      --muted:     #666;
+      --muted2:    #444;
+      --font-disp: 'Barlow Condensed', sans-serif;
+      --font-body: 'Barlow', sans-serif;
+    }
+
+    html { background: var(--bg); color: var(--text); font-family: var(--font-body); }
+    body { min-height: 100vh; overflow-x: hidden; }
+
+    /* ── Grain overlay ──────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='1'/%3E%3C/svg%3E");
+      opacity: 0.03;
+      pointer-events: none;
+    }
+
+    /* ── Court line decoration ──────────────────────── */
+    body::after {
+      content: '';
+      position: fixed;
+      top: 0; right: -200px;
+      width: 600px; height: 600px;
+      border: 1px solid rgba(245,166,35,0.06);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Layout ─────────────────────────────────────── */
+    .wrap {
+      position: relative; z-index: 1;
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 4rem 2rem 6rem;
+    }
+
+    /* ── Header ─────────────────────────────────────── */
+    header {
+      margin-bottom: 3.5rem;
+      animation: fadeUp 0.6s ease both;
+    }
+
+    .eyebrow {
+      font-family: var(--font-disp);
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-disp);
+      font-size: clamp(3.5rem, 8vw, 6.5rem);
+      font-weight: 800;
+      line-height: 0.9;
+      letter-spacing: -0.01em;
+      text-transform: uppercase;
+      color: var(--text);
+    }
+
+    h1 span {
+      display: block;
+      color: var(--accent);
+    }
+
+    .tagline {
+      margin-top: 1rem;
+      font-size: 0.85rem;
+      font-weight: 300;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+    }
+
+    /* ── Search ─────────────────────────────────────── */
+    .search-wrap {
+      margin-bottom: 3rem;
+      animation: fadeUp 0.6s 0.1s ease both;
+    }
+
+    .search-row {
+      display: flex;
+      gap: 0;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+
+    .search-row:focus-within { border-color: var(--accent); }
+
+    #playerInput {
+      flex: 1;
+      background: var(--surface);
+      border: none;
+      outline: none;
+      color: var(--text);
+      font-family: var(--font-disp);
+      font-size: 1.4rem;
+      font-weight: 400;
+      letter-spacing: 0.02em;
+      padding: 1rem 1.25rem;
+    }
+
+    #playerInput::placeholder { color: var(--muted2); }
+
+    #searchBtn {
+      background: var(--accent);
+      border: none;
+      color: #000;
+      font-family: var(--font-disp);
+      font-weight: 700;
+      font-size: 0.85rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      padding: 0 1.75rem;
+      cursor: pointer;
+      transition: background 0.2s;
+      white-space: nowrap;
+    }
+
+    #searchBtn:hover { background: #e8c040; }
+    #searchBtn:active { background: var(--accent2); }
+
+    .search-hint {
+      margin-top: 0.6rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+
+    .search-hint a {
+      color: var(--muted);
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
+    .search-hint a:hover { color: var(--accent); }
+
+    /* ── Status / error ─────────────────────────────── */
+    #status {
+      font-size: 0.85rem;
+      color: var(--muted);
+      padding: 0.5rem 0;
+      min-height: 1.5rem;
+    }
+
+    .error { color: #e87070 !important; }
+
+    /* ── Results ─────────────────────────────────────── */
+    #results { animation: fadeUp 0.4s ease both; }
+
+    /* Query card */
+    .query-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-top: 2px solid var(--accent);
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .query-name {
+      font-family: var(--font-disp);
+      font-size: 2.6rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      line-height: 1;
+    }
+
+    .query-meta {
+      font-size: 0.7rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0.4rem 0 1.25rem;
+    }
+
+    .query-meta .pos-badge {
+      display: inline-block;
+      background: var(--accent2);
+      color: #fff;
+      font-weight: 600;
+      padding: 0.1rem 0.5rem;
+      border-radius: 2px;
+      margin-right: 0.5rem;
+      font-size: 0.65rem;
+    }
+
+    /* Stat grid */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+      gap: 0.5rem;
+    }
+
+    .stat-cell {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      padding: 0.5rem 0.4rem;
+      text-align: center;
+    }
+
+    .stat-label {
+      font-size: 0.6rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      display: block;
+    }
+
+    .stat-val {
+      font-family: var(--font-disp);
+      font-size: 1.1rem;
+      font-weight: 600;
+      display: block;
+      margin-top: 2px;
+      color: var(--text);
+    }
+
+    /* Comp list */
+    .comps-label {
+      font-size: 0.7rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+    }
+
+    .comp-list { border: 1px solid var(--border); }
+
+    .comp-row {
+      display: grid;
+      grid-template-columns: 28px 1fr 70px 140px;
+      align-items: center;
+      gap: 1rem;
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+
+    .comp-row:last-child { border-bottom: none; }
+    .comp-row:hover { background: var(--surface2); }
+
+    .comp-rank {
+      font-family: var(--font-disp);
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--muted2);
+      text-align: center;
+    }
+
+    .comp-name {
+      font-family: var(--font-disp);
+      font-size: 1.15rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    .comp-seasons {
+      font-size: 0.7rem;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+      text-align: center;
+    }
+
+    .sim-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .sim-track {
+      flex: 1;
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .sim-fill {
+      height: 100%;
+      border-radius: 2px;
+      background: var(--accent);
+      transition: width 0.6s cubic-bezier(0.16,1,0.3,1);
+    }
+
+    .sim-score {
+      font-family: var(--font-disp);
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--muted);
+      min-width: 34px;
+      text-align: right;
+    }
+
+    /* comp list header row */
+    .comp-list-head {
+      display: grid;
+      grid-template-columns: 28px 1fr 70px 140px;
+      gap: 1rem;
+      padding: 0.4rem 1rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface2);
+    }
+
+    .comp-list-head span {
+      font-size: 0.6rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted2);
+    }
+
+    /* ── Autocomplete ───────────────────────────────── */
+    .autocomplete-wrap { position: relative; flex: 1; }
+
+    .autocomplete-dropdown {
+      position: absolute;
+      top: 100%;
+      left: 0; right: 0;
+      background: #161616;
+      border: 1px solid var(--accent);
+      border-top: none;
+      max-height: 280px;
+      overflow-y: auto;
+      z-index: 100;
+      display: none;
+    }
+
+    .autocomplete-dropdown.open { display: block; }
+
+    .autocomplete-item {
+      padding: 0.65rem 1.25rem;
+      font-family: var(--font-disp);
+      font-size: 1rem;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.1s;
+    }
+
+    .autocomplete-item:last-child { border-bottom: none; }
+    .autocomplete-item:hover, .autocomplete-item.active {
+      background: rgba(245,166,35,0.1);
+      color: var(--accent);
+    }
+
+    .autocomplete-item mark {
+      background: transparent;
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    /* ── Tier badges ────────────────────────────────── */
+    .tier-badge {
+      display: inline-block;
+      font-family: var(--font-disp);
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 0.15rem 0.5rem;
+      border-radius: 2px;
+      vertical-align: middle;
+      margin-left: 8px;
+    }
+    .tier-ALL_NBA  { background: #f5a623; color: #000; }
+    .tier-ALL_STAR { background: #4a90d9; color: #fff; }
+    .tier-STARTER  { background: #2a2a2a; color: #aaa; border: 1px solid #3a3a3a; }
+    .tier-RESERVE  { background: transparent; color: #555; border: 1px solid #2a2a2a; }
+
+    /* ── Tier prediction panel ───────────────────────── */
+    .prediction-panel {
+      background: #0d0d0d;
+      border: 1px solid var(--border);
+      border-left: 3px solid #4a90d9;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 2rem;
+    }
+    .prediction-title {
+      font-family: var(--font-disp);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: #4a90d9;
+      margin-bottom: 0.3rem;
+    }
+    .prediction-subtitle {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-bottom: 1.25rem;
+    }
+    .tier-bars { display: flex; flex-direction: column; gap: 0.6rem; }
+    .tier-bar-row {
+      display: grid;
+      grid-template-columns: 80px 1fr 44px;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .tier-bar-label {
+      font-family: var(--font-disp);
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .tier-bar-track {
+      height: 8px;
+      background: var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .tier-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.8s cubic-bezier(0.16,1,0.3,1);
+    }
+    .tier-bar-pct {
+      font-family: var(--font-disp);
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-align: right;
+    }
+    .prediction-footer {
+      margin-top: 1rem;
+      font-size: 0.72rem;
+      color: var(--muted2);
+    }
+    .confidence-high   { color: #5cb85c; }
+    .confidence-medium { color: var(--accent); }
+    .confidence-low    { color: #e87070; }
+
+    /* ── Stat comparison panel ──────────────────────── */
+    .comp-row {
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .comp-row .expand-icon {
+      font-size: 0.65rem;
+      color: var(--muted2);
+      transition: transform 0.2s;
+      margin-left: 6px;
+    }
+
+    .comp-row.open .expand-icon { transform: rotate(90deg); }
+
+    .comp-detail {
+      display: none;
+      background: #0f0f0f;
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 1rem 1rem calc(28px + 2rem);
+    }
+
+    .comp-detail.open { display: block; }
+
+    .comp-stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+      gap: 0.4rem;
+    }
+
+    .comp-stat-cell {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      padding: 0.45rem 0.4rem;
+      text-align: center;
+      position: relative;
+    }
+
+    .comp-stat-label {
+      font-size: 0.58rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      display: block;
+    }
+
+    .comp-stat-val {
+      font-family: var(--font-disp);
+      font-size: 1rem;
+      font-weight: 600;
+      display: block;
+      margin-top: 2px;
+    }
+
+    /* Delta indicator vs query player */
+    .comp-stat-delta {
+      font-size: 0.58rem;
+      font-weight: 500;
+      display: block;
+      margin-top: 1px;
+    }
+
+    .delta-pos { color: #5cb85c; }
+    .delta-neg { color: #d9534f; }
+    .delta-neu { color: var(--muted2); }
+
+    .comp-detail-header {
+      font-size: 0.65rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.6rem;
+    }
+
+    /* ── Loading spinner ─────────────────────────────── */
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    /* ── Quick searches ──────────────────────────────── */
+    .quick-label {
+      font-size: 0.7rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+    }
+
+    .quick-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-bottom: 2.5rem;
+      animation: fadeUp 0.6s 0.2s ease both;
+    }
+
+    .quick-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-family: var(--font-disp);
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 0.3rem 0.75rem;
+      cursor: pointer;
+      border-radius: 2px;
+      transition: all 0.15s;
+    }
+
+    .quick-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(245,166,35,0.05);
+    }
+
+    /* ── Animations ──────────────────────────────────── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ── Responsive ──────────────────────────────────── */
+    @media (max-width: 560px) {
+      .comp-row { grid-template-columns: 24px 1fr 100px; }
+      .comp-seasons { display: none; }
+      .comp-list-head { grid-template-columns: 24px 1fr 100px; }
+      .comp-list-head .head-seasons { display: none; }
+      .stat-grid { grid-template-columns: repeat(auto-fill, minmax(60px, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Header -->
+  <header>
+    <div class="eyebrow">Statistical Analysis</div>
+    <h1>NBA<span>Similarity</span></h1>
+    <p class="tagline">Per-36 · Advanced metrics · 20 seasons · Career-stage matched</p>
+  </header>
+
+  <!-- Search -->
+  <div class="search-wrap">
+    <div class="search-row">
+      <div class="autocomplete-wrap">
+        <input
+          id="playerInput"
+          type="text"
+          placeholder="Enter a player name..."
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div class="autocomplete-dropdown" id="autocompleteDropdown"></div>
+      </div>
+      <button id="searchBtn">Search</button>
+    </div>
+    <p class="search-hint">
+      Try <a onclick="quickSearch('Stephen Curry')">Stephen Curry</a>,
+      <a onclick="quickSearch('LeBron James')">LeBron James</a>, or
+      <a onclick="quickSearch('Nikola Jokić')">Nikola Jokić</a>
+    </p>
+  </div>
+
+  <!-- Quick searches -->
+  <div>
+    <div class="quick-label">Notable players</div>
+    <div class="quick-list" id="quickList"></div>
+  </div>
+
+  <!-- Status -->
+  <div id="status"></div>
+
+  <!-- Results -->
+  <div id="results"></div>
+
+</div>
+
+<script>
+  // ── Config ───────────────────────────────────────────
+  // Point this at your FastAPI server
+  const API_BASE = window.API_BASE_URL || 'https://nba-similarity-api.delightfulbush-2a93ed73.eastus.azurecontainerapps.io';
+
+  const QUICK_PLAYERS = [
+    'LeBron James', 'Stephen Curry', 'Kevin Durant', 'Giannis Antetokounmpo',
+    'Nikola Jokić', 'Chris Paul', 'James Harden', 'Kawhi Leonard',
+    'Damian Lillard', 'Joel Embiid', 'Luka Dončić', 'Dwyane Wade',
+  ];
+
+  const TIER_COLORS = {
+    ALL_NBA:  '#f5a623',
+    ALL_STAR: '#4a90d9',
+    STARTER:  '#666',
+    RESERVE:  '#444',
+  };
+
+  const TIER_LABELS = {
+    ALL_NBA:  'All-NBA',
+    ALL_STAR: 'All-Star',
+    STARTER:  'Starter',
+    RESERVE:  'Reserve',
+  };
+
+  const STAT_META = {
+    PTS:     { label: 'PTS',  fmt: v => v.toFixed(1) },
+    AST:     { label: 'AST',  fmt: v => v.toFixed(1) },
+    REB:     { label: 'REB',  fmt: v => v.toFixed(1) },
+    STL:     { label: 'STL',  fmt: v => v.toFixed(1) },
+    BLK:     { label: 'BLK',  fmt: v => v.toFixed(1) },
+    TOV:     { label: 'TOV',  fmt: v => v.toFixed(1) },
+    FGA:     { label: 'FGA',  fmt: v => v.toFixed(1) },
+    FG3A:    { label: '3PA',  fmt: v => v.toFixed(1) },
+    USG_PCT: { label: 'USG%', fmt: v => (v * 100).toFixed(0) + '%' },
+    TS_PCT:  { label: 'TS%',  fmt: v => (v * 100).toFixed(0) + '%' },
+    AST_PCT: { label: 'AST%', fmt: v => (v * 100).toFixed(0) + '%' },
+    REB_PCT: { label: 'REB%', fmt: v => (v * 100).toFixed(0) + '%' },
+  };
+
+  // ── Quick search buttons ──────────────────────────────
+  const quickList = document.getElementById('quickList');
+  QUICK_PLAYERS.forEach(name => {
+    const btn = document.createElement('button');
+    btn.className = 'quick-btn';
+    btn.textContent = name;
+    btn.onclick = () => quickSearch(name);
+    quickList.appendChild(btn);
+  });
+
+  function quickSearch(name) {
+    document.getElementById('playerInput').value = name;
+    doSearch(name);
+  }
+
+  // ── Search wiring ─────────────────────────────────────
+  document.getElementById('searchBtn').addEventListener('click', () => {
+    const val = document.getElementById('playerInput').value.trim();
+    if (val) doSearch(val);
+  });
+
+  document.getElementById('playerInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      const val = e.target.value.trim();
+      if (val) doSearch(val);
+    }
+  });
+
+  // ── API call ──────────────────────────────────────────
+  async function doSearch(playerName) {
+    const status  = document.getElementById('status');
+    const results = document.getElementById('results');
+
+    status.innerHTML = '<span class="spinner"></span> Searching...';
+    status.className = '';
+    results.innerHTML = '';
+
+    try {
+      const url = `${API_BASE}/similar/${encodeURIComponent(playerName)}?top_n=10`;
+      const res = await fetch(url);
+
+      if (res.status === 404) {
+        const err = await res.json();
+        status.textContent = err.detail || `Player "${playerName}" not found.`;
+        status.className = 'error';
+        return;
+      }
+
+      if (res.status === 400) {
+        const err = await res.json();
+        status.textContent = err.detail || 'Ambiguous name — be more specific.';
+        status.className = 'error';
+        return;
+      }
+
+      if (!res.ok) {
+        status.textContent = `API error (${res.status}).`;
+        status.className = 'error';
+        return;
+      }
+
+      const data = await res.json();
+      status.textContent = '';
+      renderResults(data);
+
+    } catch (e) {
+      status.textContent = `Cannot reach API at ${API_BASE}. Is the server running?`;
+      status.className = 'error';
+    }
+  }
+
+  // ── Render ────────────────────────────────────────────
+  function renderResults(data) {
+    const results = document.getElementById('results');
+
+    // ── Query card ──
+    const stats    = data.query_stats || {};
+    const statCells = Object.entries(STAT_META)
+      .filter(([key]) => key in stats)
+      .map(([key, meta]) => `
+        <div class="stat-cell">
+          <span class="stat-label">${meta.label}</span>
+          <span class="stat-val">${meta.fmt(stats[key])}</span>
+        </div>
+      `).join('');
+
+    // ── Tier prediction panel (only for windows 1-4) ──
+    let predictionHTML = '';
+    const pred = data.tier_prediction;
+    if (pred) {
+      const TIER_ORDER = ['ALL_NBA', 'ALL_STAR', 'STARTER', 'RESERVE'];
+      const barRows = TIER_ORDER.map(tier => {
+        const prob  = pred.tier_probs[tier] || 0;
+        const color = TIER_COLORS[tier];
+        const bold  = tier === pred.predicted_tier ? 'color:var(--text)' : '';
+        return `
+          <div class="tier-bar-row">
+            <div class="tier-bar-label" style="${bold}">${TIER_LABELS[tier]}</div>
+            <div class="tier-bar-track">
+              <div class="tier-bar-fill" style="width:0%;background:${color}" data-width="${(prob*100).toFixed(1)}%"></div>
+            </div>
+            <div class="tier-bar-pct" style="${bold}">${(prob*100).toFixed(0)}%</div>
+          </div>`;
+      }).join('');
+
+      predictionHTML = `
+        <div class="prediction-panel">
+          <div class="prediction-title">Career Trajectory Projection</div>
+          <div class="prediction-subtitle">
+            Based on ${pred.sample_size} comparable players
+            (${data.pool_size} total ${data.position_group.toLowerCase()}s in age-${data.age_window} window)
+            &nbsp;·&nbsp; <span class="confidence-${pred.confidence}">${pred.confidence} confidence</span>
+          </div>
+          <div class="tier-bars">${barRows}</div>
+          <div class="prediction-footer">${pred.note}</div>
+        </div>`;
+    }
+
+    // Similarity bar color based on score
+    function barColor(sim) {
+      if (sim >= 0.85) return '#f5a623';
+      if (sim >= 0.70) return '#c47a30';
+      return '#555';
+    }
+
+    // ── Comp rows with expandable stat comparison ──
+    const compRows = data.similar_players.map((comp, i) => {
+      const sim     = comp.similarity;
+      const pct     = Math.max(0, Math.min(1, sim));
+      const color   = barColor(sim);
+      const compId  = `comp-${i}`;
+
+      // Build stat comparison cells
+      const statCells = Object.entries(STAT_META)
+        .filter(([key]) => key in (comp.stats || {}))
+        .map(([key, meta]) => {
+          const compVal  = comp.stats[key];
+          const queryVal = stats[key];
+          const diff     = compVal - queryVal;
+          // For TOV, lower is better — flip sign
+          const goodDiff = key === 'TOV' ? -diff : diff;
+          const threshold = key.includes('PCT') ? 0.01 : 0.3;
+          const deltaClass = Math.abs(diff) < threshold ? 'delta-neu'
+                           : goodDiff > 0 ? 'delta-pos' : 'delta-neg';
+          const sign = diff > 0 ? '+' : '';
+          const deltaStr = key.includes('PCT')
+            ? `${sign}${(diff * 100).toFixed(0)}%`
+            : `${sign}${diff.toFixed(1)}`;
+          return `
+            <div class="comp-stat-cell">
+              <span class="comp-stat-label">${meta.label}</span>
+              <span class="comp-stat-val">${meta.fmt(compVal)}</span>
+              <span class="comp-stat-delta ${deltaClass}">${deltaStr}</span>
+            </div>
+          `;
+        }).join('');
+
+      return `
+        <div class="comp-row" data-comp-id="${compId}">
+          <div class="comp-rank">${i + 1}</div>
+          <div class="comp-name">
+            ${comp.player}
+            <span class="tier-badge tier-${comp.tier || 'RESERVE'}">${TIER_LABELS[comp.tier] || comp.tier || '—'}</span>
+            ${comp.measurements ? `<span style="font-size:0.7rem;color:var(--muted);font-family:var(--font-body);font-weight:300;margin-left:6px">${comp.measurements.height_display} · ${Math.round(comp.measurements.weight_lbs)}lb</span>` : ''}
+            <span class="expand-icon">▶</span>
+          </div>
+          <div class="comp-seasons">${comp.seasons_in_window} seasons played</div>
+          <div class="sim-wrap">
+            <div class="sim-track">
+              <div class="sim-fill" style="width:${(pct * 100).toFixed(1)}%;background:${color}"></div>
+            </div>
+            <div class="sim-score">${sim.toFixed(2)}</div>
+          </div>
+        </div>
+        <div class="comp-detail" id="${compId}">
+          <div class="comp-detail-header">Stats through age ${data.age_window} — delta vs ${data.query}</div>
+          <div class="comp-stat-grid">${statCells}</div>
+        </div>
+      `;
+    }).join('');
+
+    results.innerHTML = predictionHTML + `
+      <div class="query-card">
+        <div class="query-name">${data.query}</div>
+        <div class="query-meta">
+          <span class="pos-badge">${data.position_group}</span>
+          Through age ${data.age_window}
+          ${data.query_measurements ? `
+            <span style="margin-left:1rem;color:var(--muted)">
+              ${data.query_measurements.height_display}
+              &nbsp;·&nbsp;
+              ${Math.round(data.query_measurements.weight_lbs)} lbs
+            </span>` : ''}
+        </div>
+        <div class="stat-grid">${statCells}</div>
+      </div>
+
+      <div class="comps-label">Most similar players</div>
+      <div class="comp-list">
+        <div class="comp-list-head">
+          <span></span>
+          <span>Player</span>
+          <span class="head-seasons" style="text-align:center">Seasons</span>
+          <span style="text-align:right">Similarity</span>
+        </div>
+        ${compRows}
+      </div>
+    `;
+
+    // Animate bars in after paint
+    requestAnimationFrame(() => {
+      document.querySelectorAll('.sim-fill').forEach(el => {
+        const w = el.style.width;
+        el.style.width = '0';
+        requestAnimationFrame(() => { el.style.width = w; });
+      });
+    });
+
+    // Animate tier prediction bars
+    requestAnimationFrame(() => {
+      document.querySelectorAll('.tier-bar-fill[data-width]').forEach(el => {
+        const w = el.dataset.width;
+        requestAnimationFrame(() => { el.style.width = w; });
+      });
+    });
+
+    // Wire up expand/collapse after DOM is updated
+    document.querySelectorAll('.comp-row[data-comp-id]').forEach(row => {
+      row.addEventListener('click', () => {
+        const id    = row.dataset.compId;
+        const panel = document.getElementById(id);
+        if (!panel) return;
+        const isOpen = panel.classList.contains('open');
+        document.querySelectorAll('.comp-detail.open').forEach(el => el.classList.remove('open'));
+        document.querySelectorAll('.comp-row.open').forEach(el => el.classList.remove('open'));
+        if (!isOpen) {
+          panel.classList.add('open');
+          row.classList.add('open');
+        }
+      });
+    });
+  }
+</script>
+</body>
+</html>
